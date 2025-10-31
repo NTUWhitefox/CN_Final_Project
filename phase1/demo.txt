@@ -1,0 +1,13 @@
+register alice pass1
+login alice pass1 5001
+list
+logout
+
+register bob pass2
+login bob pass2 5002
+list
+
+register charlie pass3
+login charlie pass3 5003
+list
+list

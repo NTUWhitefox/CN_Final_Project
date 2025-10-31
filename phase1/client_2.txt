@@ -1,0 +1,6 @@
+Connected to server 127.0.0.1:8080
+Welcome. Commands: register, login, list, logout
+OK registered
+ERROR port in use on this IP
+ERROR not logged in
+ERROR not logged in

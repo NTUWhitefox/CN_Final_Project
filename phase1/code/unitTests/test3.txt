@@ -1,0 +1,2 @@
+1 register alice pass1
+1 login alice pass2 5001

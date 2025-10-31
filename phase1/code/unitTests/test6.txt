@@ -1,0 +1,8 @@
+1 register alice pass1
+1 login alice pass1 5001
+1 list
+2 register bob pass2
+2 login bob pass2 5001
+2 list
+1 logout
+2 logout

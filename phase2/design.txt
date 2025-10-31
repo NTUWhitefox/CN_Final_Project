@@ -1,0 +1,44 @@
+Minimal server and client in C++ (Linux sockets) to support:
+- register \<username> \<password>
+- login \<username> \<password> \<port_number>
+- list
+- logout
+
+Additional functionalities:
+('|' character is required)
+- sendto \<username> | \<msg>
+- sendtogroup \<username_1>,\<username_2>,...,\<username_n> | \<msg>
+...
+
+
+spec:
+Sending Chat Messages (sendto command):
+● Sending Chat Messages
+○ The system must implement P2P chatting.
+○ Messages are sent directly from client to client; the server is used only for discovery 
+(online list, IP/port lookup).
+● Hints
+○ Client should create a listening socket to receive incoming messages.
+○ Clients should inform the server about their listening port upon connection.
+○ Clients should obtain other clients’ IP addresses and ports from the server.
+● Requirements
+○ both sides can exchange messages.
+○ Full credit requires basic exception handling
+
+Group chatting (sendtogroup command)
+ ● Basic — 10 pts
+ ○ Implement a group chatroom (relay mode).
+ ○ Clients send messages to the server, which relays them to all members of the room.
+ ○ Messages should appear in order.
+ ○ Encryption is required.
+ ● Bonus — 5 pts (privacy + rekey on membership change)
+ ○ The server must not be able to decrypt message content
+ (metadata such as room ID, sender ID, timestamps may remain in cleartext).
+ ○ Change the group key whenever membership changes (join or leave).
+
+
+my design:
+when get any message from other users, it is printed with format:
+[(\<receiving time>) \<username> : \<msg>]
+
+

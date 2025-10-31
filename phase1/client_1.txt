@@ -1,0 +1,9 @@
+Connected to server 127.0.0.1:8080
+Welcome. Commands: register, login, list, logout
+OK registered
+OK welcome alice
+OK online:
+alice 127.0.0.1 5001
+.
+OK bye
+Server disconnected.

@@ -1,0 +1,8 @@
+register admin admin
+login admin admin 5001
+sendto guest | hello I'm admin
+
+register guest guest 
+login guest guest 5002
+list
+sendto admin | hello I'm guest
