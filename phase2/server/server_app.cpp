@@ -12,6 +12,8 @@
 
 #include "../common/command.hpp"
 #include "../common/line_buffer.hpp"
+#include "../utils/crypto/handshake.hpp"
+#include "../utils/crypto/crypto_context.hpp"
 
 namespace server {
 
@@ -92,6 +94,8 @@ void ServerApp::accept_loop() {
 
 void ServerApp::handle_client(int client_fd, sockaddr_in client_addr) {
     state_.add_session(client_fd, client_addr);
+    crypto::CryptoContext crypto_ctx;
+    bool handshake_ok = crypto::perform_server_handshake(client_fd, crypto_ctx);
     send_line(client_fd, "[server] Welcome to the CN chat server (phase 2 scaffold).");
 
     common::LineBuffer buffer;
@@ -108,10 +112,33 @@ void ServerApp::handle_client(int client_fd, sockaddr_in client_addr) {
         buffer.append(chunk, static_cast<std::size_t>(n));
         std::string line;
         while (buffer.pop_line(line)) {
+            // Decrypt if needed
+            if (crypto_ctx.ready()) {
+                if (line.rfind("ENC ", 0) == 0) {
+                    std::string enc = line.substr(4);
+                    std::string plain;
+                    if (!crypto_ctx.decrypt(enc, plain)) {
+                        send_line(client_fd, "[server] ERROR decrypt");
+                        continue;
+                    }
+                    line = plain;
+                } else {
+                    // If encryption is negotiated, ignore non-ENC lines (except early handshake/compat)
+                }
+            }
             auto cmd = common::parse_command_line(line);
             auto result = handler_.handle(client_fd, client_addr, cmd);
             for (const auto &msg : result.messages) {
-                send_line(client_fd, msg);
+                if (crypto_ctx.ready()) {
+                    std::string enc;
+                    if (crypto_ctx.encrypt(msg, enc)) {
+                        send_line(client_fd, std::string("ENC ") + enc);
+                    } else {
+                        send_line(client_fd, msg);
+                    }
+                } else {
+                    send_line(client_fd, msg);
+                }
             }
             if (result.close_after_send) {
                 ::shutdown(client_fd, SHUT_RDWR);

@@ -1,6 +1,6 @@
 CXX := g++
-CXXFLAGS := -std=c++20 -Wall -Wextra -Wpedantic -O2
-LDFLAGS := -pthread
+CXXFLAGS := -std=c++20 -Wall -Wextra -Wpedantic -O2 -DHAVE_OPENSSL=1
+LDFLAGS := -pthread -lssl -lcrypto
 
 SRC_DIR := .
 BUILD_DIR := build
@@ -13,7 +13,9 @@ SERVER_SRCS := \
 	server/command_handler.cpp \
 	server/thread_pool.cpp \
 	common/command.cpp \
-	common/line_buffer.cpp
+	common/line_buffer.cpp \
+	utils/crypto/crypto_context.cpp \
+	utils/crypto/handshake.cpp
 
 SERVER_OBJ := $(addprefix $(BUILD_DIR)/,$(SERVER_SRCS:.cpp=.o))
 
@@ -21,8 +23,12 @@ CLIENT_SRCS := \
 	client/main.cpp \
 	client/p2p_listener.cpp \
 	client/p2p_sender.cpp \
+	client/p2p_session.cpp \
+	client/p2p_session_manager.cpp \
 	common/command.cpp \
-	common/line_buffer.cpp
+	common/line_buffer.cpp \
+	utils/crypto/crypto_context.cpp \
+	utils/crypto/handshake.cpp
 
 CLIENT_OBJ := $(addprefix $(BUILD_DIR)/,$(CLIENT_SRCS:.cpp=.o))
 

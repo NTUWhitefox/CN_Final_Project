@@ -20,6 +20,9 @@
 #include "../common/line_buffer.hpp"
 #include "p2p_listener.hpp"
 #include "p2p_sender.hpp"
+#include "p2p_session_manager.hpp"
+#include "../utils/crypto/handshake.hpp"
+#include "../utils/crypto/crypto_context.hpp"
 
 namespace {
 
@@ -61,6 +64,8 @@ struct ClientState {
     int pending_login_port{0};
     std::deque<PendingSend> pending_sends;
     client::P2PListener listener;
+    crypto::CryptoContext crypto_ctx;
+    client::P2PSessionManager p2p_sessions;
 };
 
 int main(int argc, char *argv[]) {
@@ -102,6 +107,12 @@ int main(int argc, char *argv[]) {
     std::atomic<bool> running{true};
     ClientState state;
 
+    if (crypto::perform_client_handshake(sockfd, state.crypto_ctx)) {
+        print_line("[client] Secure channel established.");
+    } else {
+        print_line("[client] Proceeding without encryption (handshake skipped).");
+    }
+
     auto handle_incoming_message = [&](const std::string &sender, const std::string &message) {
         std::string display_sender = sender.empty() ? "unknown" : sender;
         std::string display_message = message;
@@ -124,6 +135,20 @@ int main(int argc, char *argv[]) {
             buffer.append(chunk, static_cast<std::size_t>(n));
             std::string line;
             while (buffer.pop_line(line)) {
+                // Decrypt if server sent encrypted line
+                {
+                    std::lock_guard<std::mutex> lock(state.mutex);
+                    if (state.crypto_ctx.ready() && line.rfind("ENC ", 0) == 0) {
+                        std::string enc = line.substr(4);
+                        std::string plain;
+                        if (state.crypto_ctx.decrypt(enc, plain)) {
+                            line = plain;
+                        } else {
+                            print_line("[client] ERROR: failed to decrypt server message");
+                            continue;
+                        }
+                    }
+                }
                 if (line.rfind("[server] OK welcome ", 0) == 0) {
                     std::istringstream iss(line.substr(std::string("[server] OK welcome ").size()));
                     std::string username;
@@ -152,6 +177,7 @@ int main(int argc, char *argv[]) {
                     state.pending_sends.clear();
                     state.listener.stop();
                 } else if (line.rfind("[server] OK sendto ", 0) == 0) {
+                    fprintf(stderr, "Processing sendto response: %s\n", line.c_str());
                     std::istringstream iss(line.substr(std::string("[server] OK sendto ").size()));
                     std::string target;
                     std::string ip;
@@ -176,19 +202,33 @@ int main(int argc, char *argv[]) {
                         if (!found) {
                             print_line("[client] No pending message for user '" + target + "'.");
                         } else {
+                            // Avoid holding state.mutex during network operations
                             std::string sender;
+                            client::P2PSessionManager* mgr = nullptr;
                             {
                                 std::lock_guard<std::mutex> lock(state.mutex);
                                 sender = state.username;
+                                mgr = &state.p2p_sessions;
                             }
-                            std::string error;
-                            if (!client::send_p2p_message(ip, port, sender, pending.message, error)) {
-                                print_line("[client] Failed to send message to '" + target + "': " + error);
+                            bool created = false;
+                            bool ok = false;
+                            if (mgr) {
+                                ok = mgr->ensure_session(target, ip, port, sender, created);
+                                if (ok) {
+                                    ok = mgr->send_message(target, sender, pending.message);
+                                }
+                            }
+                            if (!ok) {
+                                print_line("[client] Failed to deliver message to '" + target + "'.");
                             } else {
+                                if (created) {
+                                    print_line("[client] New secure P2P session with '" + target + "' established.");
+                                }
                                 print_line("[client] Message delivered to '" + target + "'.");
                             }
                         }
                     }
+                    fprintf(stderr, "Finished processing sendto response.\n");
                 } else if (line.rfind("[server] ERROR sendto ", 0) == 0) {
                     std::istringstream iss(line.substr(std::string("[server] ERROR sendto ").size()));
                     std::string target;
@@ -273,11 +313,32 @@ int main(int argc, char *argv[]) {
                 }
             }
 
-            std::string outbound = trimmed + '\n';
-            ssize_t sent = ::send(sockfd, outbound.c_str(), outbound.size(), 0);
+            std::string to_send;
+            {
+                std::lock_guard<std::mutex> lock(state.mutex);
+                if (state.crypto_ctx.ready()) {
+                    std::string enc;
+                    if (state.crypto_ctx.encrypt(trimmed, enc)) {
+                        to_send = std::string("ENC ") + enc + '\n';
+                    } else {
+                        to_send = trimmed + '\n';
+                    }
+                } else {
+                    to_send = trimmed + '\n';
+                }
+            }
+            fprintf(stderr, "Try send to server: %s", to_send.c_str());
+            ssize_t sent = ::send(sockfd, to_send.c_str(), to_send.size(), 0);
+            fprintf(stderr, "Sent to server: %s", to_send.c_str());
             if (sent < 0) {
                 perror("send");
                 running.store(false);
+                break;
+            }
+            // If the user requested logout, we proactively stop writer loop to allow clean shutdown.
+            if (keyword == "logout") {
+                // Wait briefly for reader to process server's bye.
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 break;
             }
         }

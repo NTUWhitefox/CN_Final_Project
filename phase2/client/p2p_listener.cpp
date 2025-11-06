@@ -9,6 +9,8 @@
 #include <iostream>
 
 #include "../common/line_buffer.hpp"
+#include "../utils/crypto/handshake.hpp"
+#include "../utils/crypto/crypto_context.hpp"
 
 namespace client {
 
@@ -96,18 +98,43 @@ void P2PListener::accept_loop() {
             }
             continue;
         }
-
-        common::LineBuffer buffer;
+        // Perform handshake on incoming P2P connection
+        crypto::CryptoContext ctx;
+        if (!crypto::perform_server_handshake(fd, ctx)) {
+            ::close(fd);
+            continue;
+        }
+        // Ephemeral read: single recv then close to avoid blocking shutdown.
         char chunk[1024];
         ssize_t n = ::recv(fd, chunk, sizeof(chunk), 0);
         if (n > 0) {
+            common::LineBuffer buffer;
             buffer.append(chunk, static_cast<std::size_t>(n));
             std::string line;
+            std::string peer_name;
+            bool identified = false;
             while (buffer.pop_line(line)) {
-                auto [sender, message] = parse_payload(line);
-                if (handler_) {
-                    handler_(sender, message);
+                if (ctx.ready() && line.rfind("ENC ", 0) == 0) {
+                    std::string enc = line.substr(4);
+                    std::string plain;
+                    if (!ctx.decrypt(enc, plain)) continue;
+                    line = plain;
                 }
+                if (!identified) {
+                    if (line.rfind("IDENT ", 0) == 0) {
+                        peer_name = line.substr(6);
+                        auto start = peer_name.find_first_not_of(" \t\r\n");
+                        auto end = peer_name.find_last_not_of(" \t\r\n");
+                        if (start == std::string::npos) peer_name.clear();
+                        else peer_name = peer_name.substr(start, end - start + 1);
+                        identified = !peer_name.empty();
+                    }
+                    continue;
+                }
+                std::string message = line;
+                auto parsed = parse_payload(line);
+                if (!parsed.first.empty()) message = parsed.second;
+                if (handler_ && !peer_name.empty()) handler_(peer_name, message);
             }
         }
         ::close(fd);
